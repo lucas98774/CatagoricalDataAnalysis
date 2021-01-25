@@ -1,0 +1,756 @@
+---
+title: "Poverty Levels in Costa Rica"
+author: "Luke Spellman, John Oliver & Drew Kairis"
+date: "November 26, 2018"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+  
+---
+#Introduction
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+#look into gbm package--- it may or may not be applicable
+```
+```{r results='hide', include=FALSE}
+# load necessary packages
+library(dplyr); library(ggplot2); library(cowplot); library(Hmisc); library(caret); library(pROC); library(glmnet); library(corrplot);library(psych);library(plotly) #library(Deducer)
+#FactoMineR package
+# read in data
+data <- read.csv("poverty.csv")
+dim(data)
+```
+```{r}
+#plot made by mitch and brad...
+ggplot(data, aes(x = '', fill = factor(Target))) + # x=factor(1)
+
+  geom_bar(width = 1) +
+
+  coord_polar(theta = 'y', start = pi / 3) +
+
+  scale_fill_brewer(palette = 'Reds', direction = -1,
+
+                    name = 'Target Classes',
+
+                    labels = c('Extreme Poverty', #1
+
+                               'Moderate Poverty', #2
+
+                               'Vulnerable Households', #3
+
+                               'Non-Vulnerable Households')) + #4
+
+  labs(x=NULL, y=NULL, title = 'Poverty Level Distribution') +
+
+  theme(axis.line = element_blank())
+```
+
+```{r include=FALSE}
+
+# Figure 2.
+
+# Missing values
+
+data %>%
+
+  select_if(function(x) any(is.na(x))) %>% # which columns have missing values
+
+  summarise_all(funs(sum(is.na(.)))) %>% # counts of missing
+
+  melt() %>%
+
+  ggplot(aes(reorder(variable, -value), value)) +
+
+    geom_bar(stat = 'identity', fill = 'dodgerblue3', alpha = 0.7) +
+
+    geom_text(aes(label = value), vjust = -0.5) +
+
+    labs(y = 'Missing Cases\n', title = 'Missing Observations by Feature') +
+
+    theme(axis.title.x = element_blank())
+
+```
+```{r include=FALSE}
+#check how many unique ids there are
+select(data, idhogar)%>%
+  unique()%>%
+  nrow()
+#check how amny unique ids there are for heads of households
+select(data, c(idhogar, parentesco1))%>%
+  filter(parentesco1==1)%>%
+  select(-parentesco1)%>%
+  unique()%>%
+  nrow()
+#Since there are more ids and ids for the heads of households, not all the observations corresponds to houses contained in this dataset
+```
+
+
+```{r eval=FALSE}
+#Mitch and Brad's code snippet....
+# load necessary packages
+
+library(tidyverse); library(ggplot2); library(VIM); library(corrplot); library(psych); library(factoextra); library(ggalt); library(nnet); library(pROC); library(caret); library(doParallel); library(UBL)
+
+
+
+filter(data, is.na(v2a1)) %>%
+
+  select(starts_with('tipovivi')) %>%
+
+  rownames_to_column('id') %>%
+
+  gather(Tipo, Flag, tipovivi1:tipovivi5) %>%
+
+  group_by(id) %>%
+
+  slice(which.max(Flag)) %>%
+
+  group_by(Tipo) %>%
+
+  tally() %>%
+
+  mutate(p = n/sum(n))
+
+```
+##### Background Information
+
+"10 percent of the world's population lived on less than US$1.90 a day" (World Bank) in 2015. Despite the progress that has been made in this area, poverty is still a main concern across the world. This topic is analyzed from country to country, as well as a whole through a global or humanistic lense. Extreme poverty is defined as living on less than 1.90 US dollars per day, however the definition for poverty in general is less concise.
+Our project revolves around defining poverty without using income. This shifts the discussion in a new direction and possibly a more robust and powerful direction. This restriction allows poverty to be defined in other terms, such as standards of living, which could potentially give better insight into who is affected by poverty and why especially compared to simply a monetary number. Although poverty is a very important issue in society, it is often difficult to reach those affected by poverty due to the poorest in society not being able to provide the necessary income and expense records to prove that they qualify for such programs. This curtails the effectiveness of government programs designed to give relief to those in need. This paper aims to define poverty in a new way in hopes of shedding light on a different approach to identifying and reaching those affected.
+
+##### Experimental Design
+
+Using data containing information on individuals in Costa Rica, with their current level of poverty (extreme, moderate, at risk, non vulnerable), our goal is to build a model that is able to effectively identify and categorize the level of poverty for individuals. This can then be used to quantify household needs, and help to determine which households are in most need of assistance. The scope of this project is to predict poverty levels solely for the heads of the households, rather than the entire household. If one member of the household is in poverty we are assuming that the others who live in the same house, under the same conditions, are also in 
+poverty. More information could be potentially gained through utuilizing everyone collected in this sample however, this information may not be beneficial in building a model to predict poverty level for the heads of the households.
+
+##### Data collection
+
+The data set we were given was collected from different households throughout Central America, specifically of Costa Rica. The data was collected by the Inter-American Development Bank, which is known for being the main source of multilateral financing in Latin America. This company is involved in multiple large scale projects, mostly focusing on the improvement of life. This data was collected at the individual level.
+
+#####Data Structure
+
+The dataset we were given initially contained `r nrow(data)` people from different regions of Costa Rica, in which (`r ncol(data)`) variables were collected. Most of these variables revolved mostly around geographic and socioeconomic information, excluding income. A few examples of the information collected are: region the person is from, number of people in the household, material the house is built out of and educational background of those in the household. Despite being given `r nrow(data)`, we had `r length(which(data$parentesco1==1))` heads of households.
+```{r include=FALSE}
+#check for missing data
+data.missing <- sapply(data, anyNA); sum(data.missing)
+#locate missing values
+head(data[,data.missing]) #these columns have missing data;
+#-v2a1, Monthly rent payment
+#-v18q1, number of tablets household owns
+#-rez_esc, Years behind in school
+#-meaneduc,average years of education for adults (18+)
+#-SQBmeaned, square of the mean years of education of adults (>=18) in the household
+colSums(is.na(data[,data.missing]))
+#get number of missing observations, should prolly throw out the first three variables, can keep the last two...
+#remove first three variables
+missing<- which(data.missing==TRUE); missing
+data<-data[,-missing[1:3]]
+#replace missing variables with the mean.....
+data$meaneduc[which(is.na(data$meaneduc))]<- mean(na.omit(data$meaneduc))
+data$SQBmeaned[which(is.na(data$SQBmeaned))]<- mean(na.omit(data$SQBmeaned))
+```
+```{r echo=FALSE}
+data<- subset(data, parentesco1==1)
+ggplot(data, aes(x=Target, fill=..count..)) +
+  scale_fill_gradient(low = "dodgerblue", high = "red")+
+  geom_bar(width=.9)+scale_x_discrete("Level of Poverty", limits=c("Extreme", "Moderate", "At-Risk", "Non-Vulnerable"))+
+  theme(axis.text.x = element_text(angle=-45))
+```
+
+###Subsetting The Data
+
+Our task was focused on only the heads of the household, as mentioned. Therefore, any information regarding someone who is not the head may be counterproductive in regards to building a model predicting for the heads of the household. After subsetting down to just the heads, we were left with `r length(which(data$parentesco1==1))` individuals.
+
+#### Diving into the Data
+
+The given data set required heavy manipulation. There was redundant information within the data, as well as some variables that contained missing values and were incomplete. The information collected contained some numeric variables such as age, some count data, but mostly binary responses to questions. For instance, the region that each individual lived in was not collected in one column but six columns corresponding to a yes in one region and five no's for the other regions.
+
+Therefore, an important part of this project will be collapsing this data appropriately, ensuring there is no unintentional data loss. Moreover, in collapsing these binary columns, count data will be created in order to represent this data more concisely. For instance, in the region area mentioned above, each region will be given a numeric value and then the six columns will then be collapsed into one variable where each observation has a numeric value corresponding to which region the person lives in. Variables with a large proportion missing were eliminated from our dataset, while the variables that only had a small proportion of values missing were kept and filled in with the average of that variable.
+
+
+
+```{r, out.width = "200px", echo=FALSE}
+# Figure 1:![](FNAimage.gif)
+knitr::include_graphics('Costa_Rica.png')
+```
+
+##### Collapsing and Manipulation of Data
+```{r, include=FALSE}
+#get rid of redundant variables/ majority missing/ not useful
+data$female<-NULL; data$idhogar<-NULL; data$mobilephone<-NULL; data$edjefa<-NULL; data$edjefe<-NULL; data$area1<-NULL; data$tamhog<-NULL; data$dependency<-NULL; data$SQBdependency<-NULL;data$SQBedjefe<-NULL;
+data$hhsize<-NULL; data$Id<- NULL#ones after this maybe shouldn't be taken out (double check)
+```
+```{r include=FALSE}
+#create function to collapse data into one variable
+collapsee<- function(data){
+  #write loop that will scale each column of data
+ 
+  for (i in 1:ncol(data)){
+    data[,i]<- i*data[,i]
+  }
+  #the take rowSums
+  transf<- rowSums(data)
+  return(transf)
+}
+data.cut<- data
+```
+```{r include=FALSE}
+#collapsing wall material; NOMINAL
+wallmat<- collapsee(dplyr::select(data, starts_with('pared')))
+dplyr::select(data, starts_with('pared'))%>%
+  colSums
+#verify it worked correctly
+#cut out modified variables
+data.cut<-dplyr::select(data.cut, -starts_with('pared'))
+```
+```{r include=FALSE}
+#collapsing floor material; NOMINAL
+floormat<- collapsee(dplyr::select(data, starts_with('piso')))
+data.cut<-dplyr::select(data.cut, -starts_with('piso'))
+ 
+```
+```{r include=FALSE}
+#collapse roof material; NOMINAL
+roofmat<- collapsee(dplyr::select(data, starts_with('techo')))
+data.cut<-dplyr::select(data.cut, -starts_with('techo'))
+```
+```{r, include=FALSE}
+#Water accessibility; ORDINAL
+#0 is no water in house, 1 is outside house, 2 inside house
+water<- with(data, abastaguadentro*2+abastaguafuera)
+data.cut<-dplyr::select(data.cut, -starts_with('abastagua'))
+```
+```{r, include=FALSE}
+######Electricity accessibility; ORDINAL
+#0 is no elect or nonpro, 1 is public, 2 is private
+elect<- with(data, coopele+public*2+planpri*3)
+#manually cut since no common string
+data.cut$noelec<-NULL
+data.cut$coopele<- NULL
+data.cut$public<-NULL
+data.cut$planpri<-NULL
+```
+```{r, include=FALSE}
+#toilet condition; ORDINAL
+toi<-with(data.cut,sanitario6 +sanitario5*2+sanitario2*3+sanitario3*4)
+data.cut<-dplyr::select(data.cut, -contains('sanitario'))
+```
+```{r, include=FALSE}
+#Kitchen Material; ORDINAL
+cook<-with(data.cut, energcocinar4+energcocinar3*2+energcocinar2*3)
+data.cut<-dplyr::select(data.cut, -contains('energcocinar'))
+```
+```{r include=FALSE}
+#garbage disposal
+garbdis<- with(data.cut, elimbasu1)
+data.cut<-dplyr::select(data.cut, -contains('elimbasu'))
+select(data, contains('elimbasu')) %>%
+  colSums()
+```
+```{r include=FALSE}
+#wall condit; ORDINAL
+wall<- collapsee(dplyr::select(data, starts_with('epared')))
+data.cut<-dplyr::select(data.cut, -starts_with('epared'))
+```
+```{r include=FALSE}
+#ORDINAL
+roof<- collapsee(dplyr::select(data, starts_with('etecho')))
+data.cut<-dplyr::select(data.cut, -starts_with('etecho'))
+```
+```{r include=FALSE}
+#ORDINAL
+floor<- collapsee(dplyr::select(data, starts_with('eviv')))
+data.cut<-dplyr::select(data.cut, -starts_with('eviv'))
+```
+```{r include=FALSE}
+#marital status; NOMINAL
+mstatus<- collapsee(dplyr::select(data, starts_with('estadocivil')))
+data.cut<-dplyr::select(data.cut, -starts_with('estadocivil'))
+```
+```{r include=FALSE}
+#family status; NOMINAL
+fstatus<- collapsee(dplyr::select(data, starts_with('parentesco')))
+data.cut<-dplyr::select(data.cut, -starts_with('parentesco'))
+```
+```{r, include=FALSE}
+#years of schooling; ORDINAL
+school <-collapsee(dplyr::select(data, contains('instlevel')))
+data.cut<-dplyr::select(data.cut, -contains('instlevel'))
+```
+```{r, include = FALSE}
+#house payments; ORDINAL
+pay <-with(data.cut, tipovivi5+tipovivi3*2+tipovivi2*3+tipovivi1*4)
+data.cut<-dplyr::select(data.cut, -contains('tipovivi'))
+```
+```{r, include = FALSE}
+#region; NOMINAL
+region <-collapsee(dplyr::select(data, contains('lugar')))
+data.cut<-dplyr::select(data.cut, -contains('lugar'))
+```
+```{r include=FALSE}
+#bind new variables back into data frame
+data.cut<- data.frame(data.cut,wallmat, floormat, roofmat, water,elect, toi,cook,garbdis,wall,roof,floor,mstatus,fstatus,school,pay,region)
+data.cut$fstatus<-NULL
+#all of this variable above is 1
+```
+```{r include=FALSE}
+#convert data to numeric
+data.cut<-apply(data.cut, FUN=as.numeric, MARGIN=2)
+data.cut<- as.data.frame(data.cut)
+row.names(data.cut)<- c(1:nrow(data.cut))
+```
+```{r echo=FALSE}
+library(reshape2)
+playing<-select(data.cut, c(Target,region))%>%
+  group_by(region)%>%
+  table() %>%
+  as.data.frame()
+ggplot(playing, aes(x=region, y=Target))+geom_tile(aes(fill=Freq))+labs(title='Poverty Level by Region', y='Poverty Level', x='Region')+scale_fill_continuous(low='lightblue', high='green3')
+```
+```{r include=FALSE}
+#this was not part of project, this i sme playing with ggploty
+p<-ggplot(playing, aes(x=region, y=Target))+geom_tile(aes(fill=Freq))+labs(title='Poverty Level by Region', y='Poverty Level', x='Region')+scale_fill_continuous(low='lightblue', high='green3')
+p<- ggplotly(p)
+#p
+#commented displaying this graph out since it does not knit to a pdf!
+```
+
+An interesting side note is that `r max(playing$Freq)` of our observations come from the non vulnerable group in region 1. This is `r round(max(playing$Freq)/nrow(data),3)*100` of our data and it sparks curiosity of if this dataset is representative of all of Costa Rica. It would be interesting to explore possible response bias in this sample. This would also tie back to possible information in those who are not the heads of the household. Since there are more total ID's in idhogar than there are ID's for heads of households, this means that not all people who are in this dataset are in households in this dataset. Therefore, it is reasonable to subset down to only heads of households since we don't want to build a model on information from houses that are not contained in this dataset. Mostly because this could be counter productive to building a model for these heads of households. 
+
+Due to the initial form of the information collected, this data must be collapsed before analysis can be conducted. This dimensionality reduction will initially be conservative in order to preserve the information collected. Our goal is to build a simple and interpretable model, while still remaining accurate.
+
+As mentioned above, a big part of dealing with this dataset is collapsing the initial `r ncol(data)` down to a workable number of variables that eliminate redundant information and are still insightful. In doing this, some feature selection is left up to our discretion, especially when it comes down to the interpretation of the variables we were given. One thing that was difficult about this project was that the data that was given had a brief description of each variable with it, which is somewhat useful but often vague. For example, in some of our variables had an 'other' option that was supplied. The definition of other, within the context, was unclear and made selecting how to treat that category unclear. Although the other responses were usually a small proportion of our data, getting more information on some of these responses would be helpful. As stated earlier, identifying those in poverty and getting relief to them has seemed to be tricky, therefore knowing the correct interpretation of the information collected is essential.
+
+The main process' utilized in dimensionality reduction was taking related binary variables and collapsing them down into one ordinal variable; effectively turning binary data into count data. During the process of brushing up the data, we found some repeated variables, where the same information was provided for multiple variables. These were then eliminated, as carrying multiple of the same variables is unnecessary.
+
+Since this project revolves around predicting not only who is in poverty, but also the poverty level of individuals, some of the variables we were given were collapsed into different categories while some were directly combined. When dealing with categorical data, both nominal and ordinal, a common question is what is the distance between the categories? And are the categories equally spaced? This is simply due to the nature of categorical data but forces deeper analysis or simply thought than a quantitative variable. This may not be true in every case but one example is age. Does having the grouped age such as which decade someone was born in provided the same information as having the exact age as that same person?
+We collapsed a total of 16 variables that were deemed redundant, changing them from multiple binary variables to ordinal variables containing counts of each. Of these, some of the variables included: material of the walls, region which the household is in, and marital status.
+
+### Factor Analysis for Continuous Variables
+```{r include=FALSE}
+#playing with the factor analysis that db showed us in class
+#get all continuous variables,
+#cats<-which(apply(data.cut, 2, max)==1)
+#will need cats later
+cats<- c(1,3,4,5,6,18,19,20,28,29,31,40:43,52,55)
+data.cont<- data.cut[,-cats]
+#subset to remove correlation; look at adding squared terms back in
+play<-dplyr::select(data.cont, -contains('tamviv'))%>%
+  dplyr::select(-contains('Target'))%>%
+  dplyr::select(-ends_with('1'))%>%
+  #dplyr::select(-contains('SQB'))%>%
+  dplyr::select(-contains('agesq'))%>%
+  dplyr::select(-contains('r4t'))%>%
+  dplyr::select(-contains('hogar'))
+play<- as.data.frame(apply(play, 2, scale))
+cors<-cor(play)
+#take out target
+cortest.bartlett(cors, n=2819) #since pval is so low fa might be useful
+#find correlations
+KMO(cors)
+#does not seems ot be correlation.....
+output<- princomp(cors, cor=T)
+#not entirely sure what this does above
+plot(output, type='lines') #scree plot--- interesting.... there is not a great elbow to this plot... maybe play with variables
+abline(h=1,lty=2, col='red')  # add horizontal dotted line at 1
+fa.out<- principal(play, nfactors=8, rotate='varimax', scores = TRUE)
+print.psych(fa.out, cut=.6, sort=T)
+fa.diagram(fa.out)
+#save the loadings since they will be needed for calculating factor scores later!!!
+loads<-fa.out$loadings
+#this gives the combined scores for each factor
+data.cat<- data.cut[,cats]
+data.cat$Target<-NULL
+```
+
+After trimming down some of the binary variables above, we aimed to collapse continuous variables through a method called factor analysis. Factor analysis aims to analyze variation among the inputted variables and  potentially identify unseen variables. Factor analysis recommends a number of factors to collapse down to in order to maintain 'enough' of the variance of the inputted variables. This is effectively performs dimensionality reduction and may give insight into latent, or unobserved, factors which are related to the observed data. This process, although slightly convoluted, is intended to be interpretable in the factors that it recommends. As a result of this, factor analysis is not an exact science and often does not converge to a single "correct" answer. Despite this, factor analysis can be very useful in identifying interesting combinations of variables.
+
+To make sure that this method was appropriate, we ran Bartlett test which checks homogeneity of the variance across our sample. The results of said test returned that factor analysis could indeed be insightful. We then created a correlation matrix of our desired variables, and ran that through a KMO test, to validate that factor analysis could be useful. The KMO test returned an MSA of 0.71, which is a metric signifying the overall relatedness of our inputted data. Therefore, we continued with this method. We created a scree plot which allows for visual determination of approximately how many new factors should be created.
+
+```{r echo=FALSE}
+screedf<- cbind.data.frame(output$sdev^2, 1:length(output$sdev))
+colnames(screedf)<- c("variance", "NC")
+ggplot(screedf, aes(x=NC))+geom_line(aes(y=variance), color='green3')+geom_point(aes(y=variance),color='black')+geom_hline(yintercept=1, color='lightcoral')+labs(x='Number of Factors', y='Variance')+ggtitle('Factor Analysis Scree Plot')
+```
+
+From this, it was determined that we could separate our data down to 8 separate factors.
+
+Table 1. 
+
+Group | Variables | Number of Variables collapsed in this Factor 
+--- | --- | --- 
+1 | Education-related | 5  
+2 | Total person | 2     
+3 | Total women | 2 
+4 | House size and Crowding | 4  
+5 | House condition | 3 
+6 | Age | 2 
+7 | Utilities | 3 
+8 | Water | 2 
+
+The way factor analysis combines these scores is somewhat involved with linear algebra however, conceptually the factors are given weights which are the importance or correlation to that latent factor. Then this weight is multiplied by the standardized version on the variable for that weight. These are called factor scores which are seen as the net effect of the variables grouped into that factor. As seen in table 1 this process definitely helped with dimensionality reduction and also with collinearity of these variables as well. 
+
+```{r, include=FALSE}
+#extract factor scores
+combined<- fa.out$scores
+#rename the columns
+colnames(combined)<-c("edu", "hc", "totalpeople","women","hsize", "utility","agepay", "agua")
+#bind everything into a df
+data.fin<- with(data.cut, data.frame(Target,combined,data.cat))
+facts<- c(10:ncol(data.fin))
+data.fin[,facts]<- apply(data.fin[,facts],2,factor)
+data.fin$Target<- factor(data.fin$Target)
+#look into manually throwing some of these categorical variables(binary) since some will be redundant...
+```
+```{r include=FALSE}
+#write function to output correlation matrix plot; input method must be a string that satisfies corrplot type
+cor_mat_plot<- function(data, method='number', title='Correlation Matrix'){
+  #create correlation matrix
+  cor_mat<- cor(data)
+  #make correlation plot
+  corrplot(cor_mat, method=method, title=title)
+}
+```
+```{r echo=FALSE}
+#look at correlation between variables, transformed variables!!!!
+#looking at correlations
+cor_mat_plot(data.fin[,2:9], 'color', 'Factor Analysis Correlation')
+```
+
+One thing to note, is that factor analysis was only applied to ordinal and continuous variables. We tried to implement factor analysis for categorical (nominal) variables but we ran out of time to do so. We also explored packages which supported both continuous and categorical variables however, time was an issue here as well. Since factor analysis was only applied to ordinal and continuous variables, many of the count data created earlier in this project were reordered to maximize the ordinal variables to take advantage and utilize the natural ordering of the data.
+
+In addition, standardizing the variables was done before performing factor analysis in order to account for the different scales of all of the variables. Differing scales could allow a variables with a large influence in factor analysis simply because tat variable takes large values. To account for this all the variables used in factor analysis were normalized. In other words, transformations were applied on our continuous and ordinal variables in order to minimize the effect of skewness as well as equally weight the variables being inputted into factor analysis. The specific transformation was simply standardization of every variable, which is subtracting the mean from every observation then dividing by the standard deviation of that variable. This effectively normalized our continuous data.
+
+## Variable Exploration
+```{r include=FALSE}
+gghist <- function(data, x, bin=30){
+  # helper function for plotting histograms of the same format quickly
+  p <- ggplot(data, aes(x)) +
+    geom_histogram(fill = 'green3', alpha = 0.6, bins=bin) +
+    theme_minimal() +
+    theme(axis.title.x = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.y = element_blank())
+  return(p)
+}
+```
+
+After performing factor analysis on the continuous and ordinal variables, the new factors and the nominal variables were bound into a workable dataset. This dataset was then analyzed using various plotting techniques to explore distributions of variables as well as to look into correlations between variables.
+Analysis of the ordinal and continuous variables was more straightforward since quantitative data is more commonly dealt with and more types of plots are available for data visualization. Specifically, density plots and histograms were utilized:
+
+```{r echo=FALSE}
+plot_grid(gghist(data.fin, data.fin$edu),
+          gghist(data.fin, data.fin$hc),
+          gghist(data.fin, data.fin$totalpeople),
+          gghist(data.fin, data.fin$hsize),
+          gghist(data.fin, data.fin$utility),
+          gghist(data.fin, data.fin$agepay),
+          gghist(data.fin, data.fin$agua),
+          ncol = 2, nrow = 4,
+          labels = c('Education', 'House condition', 'Total people', 'Housesize', 'Utility', "agepay", "water"),
+          hjust = -.1)
+```
+
+These histograms above convey that the new factors from factor analysis are normal (or as normal as they can be) and this was also verified by running the transformTukey function from the rcompanion package. This function recommends a transformation to apply in order to transform inputted data to normal. When applying this function to our new factor variables, this function recommended raising all the variables to the power of 1. This clearly shows that the normalization applied before factor analysis was maintained during factor analysis (due to linear combinations of normal variables maintaining the normal distribution) and that there is no further need for transformations on these variables. 
+
+```{r echo=FALSE}
+plot_grid(ggplot(data.fin, aes(x=Target, y=..count..))+geom_bar(aes(fill=hacdor), alpha=.8, position="dodge"),
+          ggplot(data.fin, aes(x=as.numeric(Target), y=..prop..))+geom_bar(aes(fill=hacdor), alpha=.8, position="dodge")+labs(x='Target'),
+          ggplot(data.fin, aes(x=Target, y=..count..))+geom_bar(aes(fill=floormat), alpha=.8),
+          ggplot(data.fin, aes(x=as.numeric(Target), y=..prop..))+geom_bar(aes(fill=floormat), alpha=.8)+labs(x='Target'),
+          ncol=2,nrow=2)
+ 
+plot_grid(ggplot(data.fin, aes(x=agua))+geom_histogram(aes(fill=Target)),
+          ggplot(data.fin, aes(x=agua))+geom_histogram(aes(fill=Target, y=..density..)),
+          ncol=1, nrow=2)
+```
+
+According to the plots above it appears that floor material 3 and 4 may add some information in predicting one's poverty level however, analyzing the counts of this variables show that there are only 2 observations in category 3 and 3 people in category 4. Similarly, the hacdor variable seems to be interesting as well until the counts of this variable is analyzed and a similar scenario is discovered. As other variables were explored this became a common theme, specifically that many of the binary data were clear signals of poverty however, the number of people blatantly in poverty was very small in comparison to the rest of our data. This makes analyzing proportions deceptive, however, this is still good to do but being aware of this is extremely important.
+
+#Building a Model
+The methods carried out through data exploration carry over into building an initial model. Using the selected transformations, we remove all highly correlated and redundant variables since. The goal of this section is to build an interpretable model that is able to accurately classify poverty level of the heads of the households.
+
+#Splitting Data Into Test and Training Set
+
+```{r include=FALSE}
+#split data:
+#split data
+train_test_split <- function(data, split_size = 0.75, seed = 3297){
+  # inputs:
+    # data -- data set to split
+    # split_size -- proportion to keep in training set
+  # output:
+    # list of a train and test set
+  obs <- nrow(data)
+  sample_size <- floor(split_size * obs) # take % for training, leave rest for test
+  set.seed(seed)
+  train_idx <- sample(seq_len(obs), size = sample_size)
+ 
+  train <- data[train_idx,]
+  test <- data[-train_idx,]
+ 
+  return(list(train = train, test = test))
+}
+#input data that you want to split in for data.transf
+data.split <- train_test_split(data.fin); train <- data.split$train; cv <- data.split$test
+```
+
+Upon implementation, our model will be used to categorize poverty level on a held-out test set of samples we have not seen before in order to validate that the model constructed is able to generalize to new data. To ensure confidence prior to implementation, the data we have available to us should be partitioned such that we can both train a model and check the fit on data the model hasn't used. To do this, we split our transformed data into 75% training, and 25% cross-validation. The process is done through random sampling based on a set seed (for replicable results), and results in a training set size of `r nrow(train)` and cross validated set size of `r nrow(cv)`.
+
+#####Model selection
+
+Since our objective is to classify poverty levels (1-4) there are a few different types of models that can potentially be applied to this type of problem. The different types of models that were considered were poisson or negative binomial regression, multinomial regression and cumulative logistic regression.
+
+```{r include=FALSE}
+#write function to train a model.... or attempt to use caret package
+library(nnet)
+training<- function(predictors, response){
+  form<- as.formula(paste(response, '~', paste(predictors, collapse='+')))
+  mod<- multinom(form, train)
+  return(mod)
+}
+test_mod<- function(obs, preds){
+ paste0('Accuracy: ', round(sum(obs==preds)/length(preds), digits = 3))
+}
+#fit saturated model below
+sat<- training(colnames(data.fin)[-1], 'Target')
+test_mod(predict(sat,type='class'), train$Target)
+test_mod(predict(sat, newdata=data.frame(cv), type='class'), cv$Target)
+
+#try cumulative logit
+library(VGAM)
+#satv1<-vglm(Target~., family=cumulative, train)
+satv<- vglm(Target~., family=cumulative(parallel=T), train)
+test_mod(apply(predict(satv,type='response'),1,which.max), train$Target)
+test_mod(apply(predict(satv, newdata=data.frame(cv), type='response'),1,which.max), cv$Target)
+```
+
+Initially, saturated models of all of these types of regression were fit and accuracy of each type of model was calculated.
+
+Table 2
+
+Model Type | Training Accuracy | Cross Validation Accuracy 
+--- | --- | ---
+Negative Binomial | .445 | .452 
+Multinomial | .684 | .652  
+Cumulative Logit | .674 | .658 
+
+Moreover, this table above shows straight accuracy and although that is a good metric, we were interested in where the predictions were miscategorizing people. This misclassification was analyzed through the use of a side by side bar graph for the predictions and observed counts for each poverty level.
+```{r include=FALSE}
+#write function to visualize misclassification....
+plot_err<- function(preds, obs){
+  library(ggplot2); library(reshape2)
+  df<- data.frame(c(preds,obs), rep(c('preds','obs'), each=length(preds)))
+  colnames(df)<-c('value', 'variable')
+  ggplot(df, aes(x=value, y=..prop..))+geom_bar(aes(fill=variable), position=position_dodge(), alpha=.8)+labs(x='Level of Poverty')+ggtitle('Misclassification')
+ 
+  #paste0('Accuracy: ', round(sum(obs==preds)/length(preds), digits = 3))
+}
+```
+```{r echo=FALSE}
+plot_err(predict(sat, newdata=data.frame(cv), type='class'), cv$Target)
+```
+
+This Graph above shows an example for the cross validation set for a multinomial regression. Once these plots were analyzed for both the training and cross validation sets across the three different types of models, it became apparent that the negative binomial model was classifying some individuals as higher than non vulnerable. Rather than further pursuing this and attempting to correct this, the negative binomial regression was dropped since the other two models seemed more promising.
+
+#Stepwise Selection procedure
+```{r include=FALSE}
+#look into stepwise selection procedure for multinomial; stepwise is not applicable to cumulative logit...
+null<- training(1, 'Target')
+contin<- training(colnames(train)[2:8], 'Target')
+stepped<- step(sat, scope=list(upper=sat, lower=contin), direction = 'backward', trace=0)
+
+test_mod(predict(stepped,type='class'), train$Target)
+test_mod(predict(stepped, newdata=data.frame(cv), type='class'), cv$Target)
+
+plot_err(predict(stepped,type='class'), train$Target)
+plot_err(predict(stepped, newdata=data.frame(cv), type='class'), cv$Target)
+```
+
+Although stepwise procedures are inherently flawed due to their internal issues in handling multicollinearity, they can be useful. The main concern with stepwise selection procedures is often that they are not good at dealing with collinearity and are prone to overfitting. Moreover, many have an issue with selecting models based off of any distance metric because too much weight is then put on that singular metric which does not encompass the "goodness" of a model. Despite this, we utilized stepwise regression mostly to cut out any unimportant nominal variables that we were not able to analyze through factor analysis. Next during this stepwise regression, we narrowed our model to a multinomial model since this performed better after the backward elimination process. 
+
+#####LASSO Regression
+
+One technique that can further dimensionality reduction but also balances accuracy is LASSO regression. Least Absolute Shrinkage and Selection Operator performs both feature selection by minimizing a function similar to SSE with a squared term in account for the coefficients of each variable. By setting a threshold on how large the summation of the squared coefficients can be and then minimizing this function effectively performs dimensionality reduction by shrinking the coefficients of the variables while also maximizing accuracy.
+
+We experimented with implementing LASSO regression in place of a stepwise selection procedure but ran into the issue of having four different sets of variables selected depending on the poverty level. When analyzing this coefficient matrix, none of the variables that were eliminated by LASSO regression was conserved across the four classes. Even implementing a cutoff value, in order to perform more aggressive dimensionality reduction, few of the coefficients deemed small were not the same across the classes. 
+
+#Results
+
+After experimenting with a few different types of models and a few different techniques our final model was a multinomial regression with a few factors cut out through backward elimination. This model gave had relatively high training accuracy (.678) compared with the other models and had the best cross validation accuracy as well (.664). This model consisted of `r length(stepped$coefnames)-1` variables and incorporated effects for each education of the household, the house condition, total people in the house, total women in the house, household size, quality of utilities, age and ownership of the household, overcrowding, a few technology indicators, a rural effect, different effects for marital status, and a regional affect for the different areas in Costa Rica.
+
+Even though this was our best model, it was only slightly more accurate than naively predicting everyone is in group 4 since 65% of our household heads were in the "non vulnerable" poverty level. Despite the predictive power of this model not being very high, this does not mean this model is not useful. This model provides insight into what has an affect on the poverty level of people in Costa Rica. Even though the information gained from this is not clear or definitive, it does not mean progress wasn't made. Furthermore, our goal in this project as to be interpretable, which was maintained. There are other ways in which more accuracy could be squeezed out of this data however, the interpretability of many of those methods may be lost.
+
+
+A recurring issue that was independent of the models fit and the techniques attempted was the fact that it was difficult to differentiate between extreme poverty and moderate poverty and also between at risk from non vulnerable households. Similarly, less than 8% of the heads of the households were in extreme poverty, about 12% were at risk while approximately 66% of people in Costa Rica were non vulnerable households. Going off this, in many of the basic necessity variables, such as access to water, there were often very few observations (less than 1%) that had no access to water. Similarly, there were a multiple categories given for how people disposed of their garbage, some of which were awful such as throwing garbage in an unoccupied space, however, there were very few people in these categories. More broadly, even though there were observations in extreme poverty and that didn't have basic necessities, the overwhelmingly major of people did. Extending this, the some identifiers of the poverty level of people most likely were not contained in this dataset. For instance, an interesting part of the electricity variable is that a decent amount of people relied on the government for power. This implies that at least some of those people couldn't pay for power, and the difference between the poverty levels might not be as glaring as does one have basic necessities. On the contrary, it may be a subtle distinction such as how much is a household reliant on the government for basic necessities. 
+
+#Conclusion
+
+Overall, it appeared that the data collected provided some insight into the poverty level of people in Costa Rica. Moving forward, for future exploration we would recommend gathering more detailed data on the standards of living. For instance, further depth in  what is inside the house, and the condition of what is in the houses would be helpful since it became apparent that the majority of residents had "decent" houses. As mentioned earlier, this became a common theme, that the majority of residents in our sample were not in glaring extreme poverty although there were a few. Therefore, in order to more effectively distinguish poverty level, more detailed information on standards of living, work and transportation among others could possibly provide crucial insight into distinguishing poverty levels.
+
+
+```{r include=FALSE}
+test<-read.csv('poverty-test-blinded.csv')
+#repeat exact same process for everything..
+test<- subset(test, parentesco1==1)
+
+```
+
+
+```{r, include=FALSE}
+#get rid of redundant variables/ majority missing/ not useful
+test$female<-NULL; test$idhogar<-NULL; test$mobilephone<-NULL; test$edjefa<-NULL; test$edjefe<-NULL; test$area1<-NULL; test$tamhog<-NULL; test$dependency<-NULL; test$SQBdependency<-NULL;test$SQBedjefe<-NULL;
+test$hhsize<-NULL; #ones after this maybe shouldn't be taken out (double check)
+```
+```{r include=FALSE}
+test.cut<- test
+```
+```{r include=FALSE}
+#collapsing wall material; NOMINAL
+wallmat<- collapsee(dplyr::select(test, starts_with('pared')))
+dplyr::select(test, starts_with('pared'))%>%
+  colSums
+#verify it worked correctly
+#cut out modified variables
+test.cut<-dplyr::select(test.cut, -starts_with('pared'))
+```
+```{r include=FALSE}
+#collapsing floor material; NOMINAL
+floormat<- collapsee(dplyr::select(test, starts_with('piso')))
+test.cut<-dplyr::select(test.cut, -starts_with('piso'))
+ 
+```
+```{r include=FALSE}
+#collapse roof material; NOMINAL
+roofmat<- collapsee(dplyr::select(test, starts_with('techo')))
+test.cut<-dplyr::select(test.cut, -starts_with('techo'))
+```
+```{r, include=FALSE}
+#Water accessibility; ORDINAL
+#0 is no water in house, 1 is outside house, 2 inside house
+water<- with(test, abastaguadentro*2+abastaguafuera)
+test.cut<-dplyr::select(test.cut, -starts_with('abastagua'))
+```
+```{r, include=FALSE}
+######Electricity accessibility; ORDINAL
+#0 is no elect or nonpro, 1 is public, 2 is private
+elect<- with(test, coopele+public*2+planpri*3)
+#manually cut since no common string
+test.cut$noelec<-NULL
+test.cut$coopele<- NULL
+test.cut$public<-NULL
+test.cut$planpri<-NULL
+```
+```{r, include=FALSE}
+#toilet condition; ORDINAL
+toi<-with(test.cut,sanitario6 +sanitario5*2+sanitario2*3+sanitario3*4)
+test.cut<-dplyr::select(test.cut, -contains('sanitario'))
+```
+```{r, include=FALSE}
+#Kitchen Material; ORDINAL
+cook<-with(test.cut, energcocinar4+energcocinar3*2+energcocinar2*3)
+test.cut<-dplyr::select(test.cut, -contains('energcocinar'))
+```
+```{r include=FALSE}
+#garbage disposal
+garbdis<- with(test.cut, elimbasu1)
+test.cut<-dplyr::select(test.cut, -contains('elimbasu'))
+select(test, contains('elimbasu')) %>%
+  colSums()
+```
+```{r include=FALSE}
+#wall condit; ORDINAL
+wall<- collapsee(dplyr::select(test, starts_with('epared')))
+test.cut<-dplyr::select(test.cut, -starts_with('epared'))
+```
+```{r include=FALSE}
+#ORDINAL
+roof<- collapsee(dplyr::select(test, starts_with('etecho')))
+test.cut<-dplyr::select(test.cut, -starts_with('etecho'))
+```
+```{r include=FALSE}
+#ORDINAL
+floor<- collapsee(dplyr::select(test, starts_with('eviv')))
+test.cut<-dplyr::select(test.cut, -starts_with('eviv'))
+```
+```{r include=FALSE}
+#marital status; NOMINAL
+mstatus<- collapsee(dplyr::select(test, starts_with('estadocivil')))
+test.cut<-dplyr::select(test.cut, -starts_with('estadocivil'))
+```
+```{r include=FALSE}
+#family status; NOMINAL
+fstatus<- collapsee(dplyr::select(test, starts_with('parentesco')))
+test.cut<-dplyr::select(test.cut, -starts_with('parentesco'))
+```
+```{r, include=FALSE}
+#years of schooling; ORDINAL
+school <-collapsee(dplyr::select(test, contains('instlevel')))
+test.cut<-dplyr::select(test.cut, -contains('instlevel'))
+```
+```{r, include = FALSE}
+#house payments; ORDINAL
+pay <-with(test.cut, tipovivi5+tipovivi3*2+tipovivi2*3+tipovivi1*4)
+test.cut<-dplyr::select(test.cut, -contains('tipovivi'))
+```
+```{r, include = FALSE}
+#region; NOMINAL
+region <-collapsee(dplyr::select(test, contains('lugar')))
+test.cut<-dplyr::select(test.cut, -contains('lugar'))
+```
+```{r include=FALSE}
+#bind new variables back into test frame
+test.cut<- data.frame(test.cut,wallmat, floormat, roofmat, water,elect, toi,cook,garbdis,wall,roof,floor,mstatus,fstatus,school,pay,region)
+test.cut$fstatus<-NULL
+#all of this variable above is 1
+```
+```{r include=FALSE}
+#convert test to numeric
+test.cut<-apply(test.cut, FUN=as.numeric, MARGIN=2)
+test.cut<- as.data.frame(test.cut)
+row.names(test.cut)<- c(1:nrow(test.cut))
+test.cut$rez_esc<-NULL; test.cut$v2a1<-NULL; test.cut$v18q1<-NULL; test.cut$Id<-NULL
+```
+```{r include=FALSE}
+test.cont<- test.cut[,-cats]
+test.cat<- test.cut[,cats]
+tplay<-dplyr::select(test.cont, -contains('tamviv'))%>%
+  dplyr::select(-contains('Target'))%>%
+  dplyr::select(-ends_with('1'))%>%
+  #dplyr::select(-contains('SQB'))%>%
+  dplyr::select(-contains('agesq'))%>%
+  dplyr::select(-contains('r4t'))%>%
+  dplyr::select(-contains('hogar'))
+#might need to apply the exact scale that was applied to previously; 
+tplay<- apply(tplay,2,scale)
+
+```
+```{r, include=FALSE}
+#compute factor scores
+tcombined<- factor.scores(tplay, fa.out)$scores
+#rename the columns
+colnames(tcombined)<-c("edu", "hc", "totalpeople","women","hsize", "utility","agepay", "agua")
+#bind everything into a df
+test.fin<- with(test.cut, data.frame(Target,tcombined,test.cat))
+facts<- c(10:ncol(test.fin))
+test.fin[,facts]<- apply(test.fin[,facts],2,factor)
+test.fin$Target<- factor(test.fin$Target)
+#look into manually throwing some of these categorical variables(binary) since some will be redundant...
+```
+
+```{r include=FALSE}
+#make predictions:
+test.fin$Id<-test$Id
+
+preds<- predict(stepped, newdata=data.frame(test.fin), type='class')
+output <- with(test.fin, cbind.data.frame(Id, preds))
+colnames(output) <- c('Id', 'Target')
+table(output$Target)/nrow(output)
+table(predict(stepped, newdata=data.frame(cv), type='class'))/nrow(cv)
+#write.csv(output, file = 'povertypreds.csv', row.names = FALSE)
+
+```
+
+
+
+
