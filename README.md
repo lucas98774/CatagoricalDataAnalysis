@@ -3,7 +3,7 @@
 Class: Categorical Data Analysis
 Semester: Fall 2018
 
-Both contain r markdown files and written reports
+Both contain R markdown files and written reports
 
 ## Contents
 
